@@ -1,0 +1,186 @@
+---
+title: "STA712 - Fall 23 - Project 1"
+author: "Ashley E. Mullan"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(visdat)
+library(MASS)
+library(ThemePark)
+library(broom)
+library(gridExtra)
+library(car)
+source("http://www.openintro.org/stat/data/cdc.R")
+```
+
+```{r}
+glimpse(cdc)
+vis_miss(cdc)
+vis_cor(cdc |> dplyr::select(where(is.numeric)))
+
+cdc <- cdc |>
+  mutate(exerany = as.factor(exerany)) |>
+  mutate(hlthplan = as.factor(hlthplan)) |>
+  mutate(smoke100 = as.factor(smoke100)) |>
+  mutate(bmi = weight * 703 / (height * height)) |>
+  mutate(loss_goal = weight - wtdesire)
+```
+
+```{r, warning = FALSE, message = FALSE}
+vis_dist <- function(xvar, df){
+  colname <- df |> dplyr::select({{ xvar }}) |> colnames()
+  if(is.numeric(df |> pull(colname))) {
+    df |>
+      ggplot(aes(x = {{ xvar }})) + 
+      geom_histogram(fill = "#a62675ff") +
+      theme_barbie() +
+      labs(title = paste0(colname, " distribution"),
+           x = colname) +
+      theme(plot.title = element_text(size = 4),
+            axis.text = element_text(size = 4),
+            axis.title = element_text(size = 4))
+      
+  }
+  else {
+    df |>
+    ggplot(aes(x = {{ xvar }})) +
+    geom_bar(fill = "#a62675ff") +
+    theme_barbie() +
+    labs(title = paste0(colname, " distribution"),
+           x = colname) +
+    theme(plot.title = element_text(size = 4),
+          axis.text.x = element_text(size = 4, angle = 30),
+          axis.text.y = element_text(size = 4),
+          axis.title = element_text(size = 4))
+  }
+}
+
+genhlth_dist <- vis_dist(genhlth, cdc)
+exerany_dist <- vis_dist(exerany, cdc)
+hlthplan_dist <- vis_dist(hlthplan, cdc)
+smoke100_dist <- vis_dist(smoke100, cdc) 
+height_dist <- vis_dist(height, cdc)
+weight_dist <- vis_dist(weight, cdc)
+wtdesire_dist <- vis_dist(wtdesire, cdc)
+age_dist <- vis_dist(age, cdc)
+gender_dist <- vis_dist(gender, cdc)
+bmi_dist <- vis_dist(bmi, cdc)
+loss_dist <- vis_dist(loss_goal, cdc)
+
+grid.arrange(genhlth_dist, exerany_dist, hlthplan_dist,
+             smoke100_dist, height_dist, weight_dist,
+             wtdesire_dist, age_dist, gender_dist, bmi_dist, 
+             loss_dist, ncol = 4)
+```
+
+```{r}
+#how much weight want to lose ~ p(exercise reg) + age + genhealth + healthcov
+
+#who well can we predict whethe rpatient exercises regularly
+m0_fwd <- glm(exerany ~ 1, 
+              data = cdc, 
+              family = "binomial")
+
+forward_aic <- stepAIC(m0_fwd, scope = ~ genhlth + hlthplan + smoke100 + height + weight + wtdesire + age + gender + bmi,
+                      direction = "forward",
+                      trace = 0)
+forward_bic <- stepAIC(m0_fwd, scope = ~ genhlth + hlthplan + smoke100 + height + weight + wtdesire + age + gender + bmi,
+                      direction = "forward",
+                      trace = 0,
+                      k = log(nrow(cdc)))
+tidy_faic <- forward_aic |> tidy()
+tidy_fbic <- forward_bic |> tidy()
+
+m0_bck <- glm(exerany ~ genhlth + hlthplan + smoke100 + height + weight + wtdesire + age + gender + bmi, 
+              data = cdc,
+              family = "binomial")
+backward_aic <- stepAIC(m0_bck, trace = 0)
+backward_bic <- stepAIC(m0_bck,
+                        trace = 0,
+                        k = log(nrow(cdc)))
+
+tidy_baic <- backward_aic |> tidy()
+tidy_bbic <- backward_bic |> tidy()
+
+assessment <- data.frame(
+  real = cdc$exerany,
+  pred_faic = ifelse(forward_aic$fitted.values > 0.5, 1, 0),
+  pred_fbic = ifelse(forward_bic$fitted.values > 0.5, 1, 0),
+  pred_baic = ifelse(backward_aic$fitted.values > 0.5, 1, 0),
+  pred_bbic = ifelse(backward_bic$fitted.values > 0.5, 1, 0)
+) 
+
+#Confusion Matrices
+cm_faic <- table("Predicted" = assessment$pred_faic,
+      "Observed" = assessment$real)
+
+cm_fbic <- table("Predicted" = assessment$pred_fbic,
+      "Observed" = assessment$real)
+
+cm_baic <- table("Predicted" = assessment$pred_baic,
+      "Observed" = assessment$real)
+
+cm_bbic <- table("Predicted" = assessment$pred_bbic,
+      "Observed" = assessment$real)
+
+pred_faic <- prediction(forward_aic$fitted.values, forward_aic$y)
+
+pred_fbic <- prediction(forward_bic$fitted.values, forward_bic$y)
+
+pred_baic <- prediction(backward_aic$fitted.values, backward_aic$y)
+
+pred_bbic <- prediction(backward_bic$fitted.values, backward_bic$y)
+
+performance(pred_faic, "auc")@y.values
+performance(pred_fbic, "auc")@y.values
+performance(pred_baic, "auc")@y.values
+performance(pred_bbic, "auc")@y.values
+
+ests_faic <- tidy_faic |> dplyr::select(term, estimate)
+ests_fbic <- tidy_fbic |> dplyr::select(term, estimate)
+ests_baic <- tidy_baic |> dplyr::select(term, estimate)
+ests_bbic <- tidy_bbic |> dplyr::select(term, estimate)
+
+
+final_mod <- glm(data = cdc, exerany ~ genhlth + hlthplan + height + bmi + age, family = "binomial")
+```
+
+```{r}
+qresid_plot <- function(xvar, model, df){
+  qres <- qresid(model)
+  p <-  df |> 
+        mutate(qres = qres) |>
+        ggplot(aes(x = get(xvar), y = qres)) +
+        geom_point(size = 0.8) +
+        geom_smooth(color = "red", linewidth = 0.8,
+                    method = "loess", formula = y ~ x,
+                    se = FALSE) +
+        labs(title = "Quantile Residual Plot",
+        x = xvar,
+        y = "Quantile Residual") +
+    theme_minimal() +
+    theme(text = element_text(size = 9))
+  p
+}
+
+View(ests_faic)
+p1 <- qresid_plot("height", final_mod, cdc)
+p2 <- qresid_plot("bmi", final_mod, cdc)
+p3 <- qresid_plot("age", final_mod, cdc)
+
+cook <- cooks.distance(final_mod)
+max(cook)
+
+vif(final_mod)
+```
+
+```{r}
+# p(exercise reg) + age + genhealth + healthcov
+cdc_wl <- cdc |> mutate(per = final_mod$fitted.values) |> filter(loss_goal > 0) 
+
+wtdesire_wl <- vis_dist(wtdesire, cdc_wl)
+
+```
+
