@@ -11,6 +11,8 @@ library(MASS)
 library(ThemePark)
 library(broom)
 library(gridExtra)
+library(statmod)
+library(ROCR)
 library(car)
 source("http://www.openintro.org/stat/data/cdc.R")
 ```
@@ -78,7 +80,7 @@ grid.arrange(genhlth_dist, exerany_dist, hlthplan_dist,
 ```{r}
 #how much weight want to lose ~ p(exercise reg) + age + genhealth + healthcov
 
-#who well can we predict whethe rpatient exercises regularly
+#whoq well can we predict whether patient exercises regularly
 m0_fwd <- glm(exerany ~ 1, 
               data = cdc, 
               family = "binomial")
@@ -145,6 +147,10 @@ ests_bbic <- tidy_bbic |> dplyr::select(term, estimate)
 
 
 final_mod <- glm(data = cdc, exerany ~ genhlth + hlthplan + height + bmi + age, family = "binomial")
+
+final_mod |> tidy()
+
+final_mod |> summary()
 ```
 
 ```{r}
@@ -165,10 +171,11 @@ qresid_plot <- function(xvar, model, df){
   p
 }
 
-View(ests_faic)
 p1 <- qresid_plot("height", final_mod, cdc)
 p2 <- qresid_plot("bmi", final_mod, cdc)
 p3 <- qresid_plot("age", final_mod, cdc)
+
+grid.arrange(p1,p2,p3, ncol = 3)
 
 cook <- cooks.distance(final_mod)
 max(cook)
@@ -178,9 +185,49 @@ vif(final_mod)
 
 ```{r}
 # p(exercise reg) + age + genhealth + healthcov
-cdc_wl <- cdc |> mutate(per = final_mod$fitted.values) |> filter(loss_goal > 0) 
+cdc_wl <- cdc |> 
+  mutate(per = final_mod$fitted.values) |> filter(loss_goal > 0) |>
+  mutate(logloss = log(loss_goal))
 
-wtdesire_wl <- vis_dist(wtdesire, cdc_wl)
+dim(cdc_wl)
 
+per_wl <- vis_dist(per, cdc_wl)
+age_wl <- vis_dist(age, cdc_wl)
+genhlth_wl <- vis_dist(genhlth, cdc_wl)
+hlthplan_wl <- vis_dist(hlthplan, cdc_wl)
+loss_wl <- vis_dist(loss_goal, cdc_wl)
+
+grid.arrange(per_wl, age_wl, genhlth_wl, hlthplan_wl, loss_wl, ncol = 3)
+
+mod2a <- lm(data = cdc_wl,
+            loss_goal ~ per + age + genhlth + hlthplan)
+plot(mod2a)
+
+cook2a <- cooks.distance(mod2a)
+max(cook2a)
+
+vif(mod2a)
+
+logloss_wl <- vis_dist(logloss, cdc_wl)
+grid.arrange(loss_wl, logloss_wl, ncol = 2)
+
+mod2b <- lm(data = cdc_wl,
+            logloss ~ per + age + genhlth + hlthplan)
+plot(mod2b)
+
+ggplot(data = NULL, aes(x = mod2b$fitted.values, y = mod2b$residuals)) +
+  geom_point() +
+  geom_smooth(se = FALSE, color = "red") +
+  theme_bw() +
+  labs(title = "Residual Plot",
+       x = "Fitted Values",
+       y = "Residuals")
+
+cook2b <- cooks.distance(mod2b)
+max(cook2b)
+
+vif(mod2b)
+
+mod2b |> tidy()
 ```
 
