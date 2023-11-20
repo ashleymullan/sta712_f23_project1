@@ -8,13 +8,32 @@ format: html
 library(tidyverse)
 library(visdat)
 library(MASS)
-library(ThemePark)
 library(broom)
+library(grid)
 library(gridExtra)
 library(statmod)
 library(ROCR)
 library(car)
+library(gtsummary)
 source("http://www.openintro.org/stat/data/cdc.R")
+
+qresid_plot <- function(xvar, model, df){
+  qres <- qresid(model)
+  p <-  df |> 
+        mutate(qres = qres) |>
+        ggplot(aes(x = get(xvar), y = qres)) +
+        geom_point(size = 0.8) +
+        geom_smooth(color = "red", linewidth = 0.8,
+                    method = "loess", formula = y ~ x,
+                    se = FALSE) +
+        labs(title = "Quantile Residual Plot",
+        x = xvar,
+        y = "Quantile Residual") +
+    theme_minimal() +
+    theme(text = element_text(size = 12))
+  p
+}
+
 ```
 
 ```{r}
@@ -27,7 +46,18 @@ cdc <- cdc |>
   mutate(hlthplan = as.factor(hlthplan)) |>
   mutate(smoke100 = as.factor(smoke100)) |>
   mutate(bmi = weight * 703 / (height * height)) |>
-  mutate(loss_goal = weight - wtdesire)
+  mutate(loss_goal = weight - wtdesire) |>
+  filter(wtdesire <= 600)
+```
+
+```{r}
+tbl <- cdc |> 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ "mean:{mean}, sd:{sd}",
+      all_categorical() ~ "n = {n}"
+    ))
+tbl
 ```
 
 ```{r, warning = FALSE, message = FALSE}
@@ -36,26 +66,27 @@ vis_dist <- function(xvar, df){
   if(is.numeric(df |> pull(colname))) {
     df |>
       ggplot(aes(x = {{ xvar }})) + 
-      geom_histogram(fill = "#a62675ff") +
-      theme_barbie() +
-      labs(title = paste0(colname, " distribution"),
+      geom_histogram(fill = "black") +
+      theme_minimal() +
+      labs(title = "",
            x = colname) +
-      theme(plot.title = element_text(size = 4),
-            axis.text = element_text(size = 4),
-            axis.title = element_text(size = 4))
+      theme(plot.title = element_text(size = 10),
+            axis.text = element_text(size = 10),
+            axis.text.x = element_text(size = 8, angle = 50, vjust = 0.6),
+            axis.title = element_text(size = 10))
       
   }
   else {
     df |>
     ggplot(aes(x = {{ xvar }})) +
-    geom_bar(fill = "#a62675ff") +
-    theme_barbie() +
-    labs(title = paste0(colname, " distribution"),
+    geom_bar(fill = "black") +
+    theme_minimal() +
+    labs(title = paste0(""),
            x = colname) +
-    theme(plot.title = element_text(size = 4),
-          axis.text.x = element_text(size = 4, angle = 30),
-          axis.text.y = element_text(size = 4),
-          axis.title = element_text(size = 4))
+    theme(plot.title = element_text(size = 10),
+          axis.text.x = element_text(size = 8, angle = 50, vjust = 0.6),
+          axis.text.y = element_text(size = 10),
+          axis.title = element_text(size = 10))
   }
 }
 
@@ -71,16 +102,99 @@ gender_dist <- vis_dist(gender, cdc)
 bmi_dist <- vis_dist(bmi, cdc)
 loss_dist <- vis_dist(loss_goal, cdc)
 
-grid.arrange(genhlth_dist, exerany_dist, hlthplan_dist,
-             smoke100_dist, height_dist, weight_dist,
-             wtdesire_dist, age_dist, gender_dist, bmi_dist, 
-             loss_dist, ncol = 4)
+dist_plot <- grid.arrange(genhlth_dist, exerany_dist, hlthplan_dist, loss_dist, age_dist, ncol = 3, top = textGrob("Variable Distributions Before Subsetting"))
+ggsave(filename = "dist_plot.pdf", plot = dist_plot, path = "/Users/ashleymullan/Documents/Grad School/Wake Forest/M.S. Coursework/Fall 2023/STA712/Project 1/sta712_f23_project1", width = 4, height = 4, units = "in")
+
+genhlth_dist2 <- vis_dist(genhlth, loss)
+exerany_dist2 <- vis_dist(exerany, loss)
+hlthplan_dist2 <- vis_dist(hlthplan, loss)
+age_dist2 <- vis_dist(age, loss)
+loss_dist2 <- vis_dist(loss_goal, loss)
+
+dist_plot2 <- grid.arrange(genhlth_dist2, exerany_dist2, hlthplan_dist2, loss_dist2, age_dist2, ncol = 3,
+                           top = textGrob("Variable Distributions After Subsetting"))
+ggsave(filename = "dist_plot2.pdf", plot = dist_plot2, path = "/Users/ashleymullan/Documents/Grad School/Wake Forest/M.S. Coursework/Fall 2023/STA712/Project 1/sta712_f23_project1", width = 4, height = 4, units = "in")
 ```
 
 ```{r}
-#how much weight want to lose ~ p(exercise reg) + age + genhealth + healthcov
+#prediction question
+m0 <- glm(exerany ~ loss_goal + age + genhlth + hlthplan, data = cdc, family = "binomial")
+both_bic <- stepAIC(m0, 
+                    direction = "both", 
+                    trace = 0,
+                    k = log(nrow(cdc)))
+both_aic <- stepAIC(m0, 
+                    direction = "both", 
+                    trace = 0)
+back_aic <- stepAIC(m0, 
+                    direction = "backward", 
+                    trace = 0)
+back_bic <- stepAIC(m0, 
+                    direction = "backward", 
+                    trace = 0,
+                    k = log(nrow(cdc)))
+fwd_bic <- stepAIC(m0, 
+                    direction = "forward", 
+                    trace = 0,
+                    k = log(nrow(cdc)))
+fwd_aic <- stepAIC(m0, 
+                    direction = "forward", 
+                    trace = 0)
 
-#whoq well can we predict whether patient exercises regularly
+#compare models
+fa <- fwd_aic |> tidy() |> pull(estimate)
+fb <- fwd_bic |> tidy() |> pull(estimate)
+ba <- back_aic |> tidy() |> pull(estimate)
+bb <- back_bic |> tidy() |> pull(estimate)
+ta <- both_aic |> tidy() |> pull(estimate)
+tb <- both_bic |> tidy() |> pull(estimate)
+
+#save model info
+coefs <- m0 |> tidy() |> pull(term)
+m0 |> tidy() |> 
+  dplyr::select(estimate, std.error) |> round(4) |> 
+  mutate(term = coefs, .before = estimate)
+
+#model checks
+qresid_plot("loss_goal", m0, cdc)
+qresid_plot("age", m0, cdc)
+vif(m0)
+cook_pred <- cooks.distance(m0)
+max(cook_pred)
+
+#save predictions
+pred_m0 <- ifelse(m0$fitted.values > 0.5, 1, 0)
+tf <- ifelse(pred_m0 == cdc$exerany, "true", "false")
+pn <- ifelse(pred_m0 == 1, "pos", "neg")
+type <- paste(tf, pn)
+
+#error assessment
+table(type)
+acc <- round((481 + 14535)/(378 + 4604 + 481 + 14535),4)
+sens <- round((14535) / (378 + 14535),4)
+spec <- round((481) / (4604 + 481),4)
+paste0("acc: ", acc, " sens: ", sens, " spec: ", spec)
+pred <- prediction(pred_m0, cdc$exerany)
+performance(pred, "auc")@y.values
+```
+
+```{r}
+#inference question
+loss <- cdc |> 
+  filter(loss_goal > 0) |>
+  mutate(sqrt_loss = sqrt(loss_goal))
+inf <- glm(exerany ~ sqrt_loss + age + genhlth + hlthplan, data = loss, family = "binomial")
+lab <- inf |> tidy() |> pull(term)
+inf |> tidy() |> 
+  dplyr::select(estimate, std.error, statistic, p.value) |> round(4) |> 
+  mutate(term = lab, .before = estimate)
+inf_qr <- qresid_plot("sqrt_loss", inf, loss) + xlab("sqrt(Weight Loss Goal)")
+ggsave(filename = "inf_qr.pdf", plot = inf_qr, path = "/Users/ashleymullan/Documents/Grad School/Wake Forest/M.S. Coursework/Fall 2023/STA712/Project 1/sta712_f23_project1", width = 4, height = 2, units = "in")
+```
+
+
+The block below is no longer used, but is here for completeness.
+```{r}
 m0_fwd <- glm(exerany ~ 1, 
               data = cdc, 
               family = "binomial")
@@ -154,23 +268,6 @@ final_mod |> summary()
 ```
 
 ```{r}
-qresid_plot <- function(xvar, model, df){
-  qres <- qresid(model)
-  p <-  df |> 
-        mutate(qres = qres) |>
-        ggplot(aes(x = get(xvar), y = qres)) +
-        geom_point(size = 0.8) +
-        geom_smooth(color = "red", linewidth = 0.8,
-                    method = "loess", formula = y ~ x,
-                    se = FALSE) +
-        labs(title = "Quantile Residual Plot",
-        x = xvar,
-        y = "Quantile Residual") +
-    theme_minimal() +
-    theme(text = element_text(size = 9))
-  p
-}
-
 p1 <- qresid_plot("height", final_mod, cdc)
 p2 <- qresid_plot("bmi", final_mod, cdc)
 p3 <- qresid_plot("age", final_mod, cdc)
